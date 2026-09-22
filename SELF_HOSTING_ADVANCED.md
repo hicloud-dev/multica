@@ -465,6 +465,12 @@ Certificates live in the `traefik_acme` named volume, so they survive `down` / `
 
 To stay on the published images while using this, leave out `docker-compose.selfhost.build.yml`; the overrides are independent and compose in any order.
 
+Every `docker compose` command has to repeat the same `-f` list, and dropping one is silent rather than loud: omit the build override and Compose resolves `image:` back to the published GHCR tag, so the next `up -d` quietly *replaces your locally built containers with the released version*. Nothing errors — the stack just reverts. Pin the list in `.env` instead, and plain `docker compose up -d` stays correct:
+
+```dotenv
+COMPOSE_FILE=docker-compose.selfhost.yml:docker-compose.selfhost.build.yml:docker-compose.selfhost.traefik.yml
+```
+
 ### Caddy (Recommended)
 
 **Single-domain layout** — frontend and backend served on the same hostname (this is what `docker-compose.selfhost.yml` defaults to):
