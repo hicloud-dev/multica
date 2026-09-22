@@ -113,6 +113,8 @@ MULTICA_PUBLIC_URL=https://api.example.com
 
 With this configuration all browser traffic stays on the app domain, so cookies never cross domains and `COOKIE_DOMAIN` is not needed. If the browser talks to the api domain directly instead, you must set it — see [Environment variables](/environment-variables).
 
+If you would rather not write proxy config at all, this repo ships a Traefik override that reads its routing off container labels and handles Let's Encrypt for you — see [Reverse Proxy](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md#reverse-proxy). The rest of this page uses Caddy.
+
 Then set up DNS and proxy the local ports with Caddy:
 
 ```text

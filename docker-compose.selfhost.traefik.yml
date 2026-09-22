@@ -1,0 +1,87 @@
+# Optional override: put Traefik in front of the stack and let it obtain and
+# renew a Let's Encrypt certificate automatically.
+#
+#   docker compose -f docker-compose.selfhost.yml \
+#                  -f docker-compose.selfhost.traefik.yml up -d
+#
+# Requires in .env:
+#   MULTICA_DOMAIN             public hostname, e.g. multica.example.com
+#   ACME_EMAIL                 where Let's Encrypt sends expiry warnings
+#   FRONTEND_ORIGIN            https://${MULTICA_DOMAIN} — the app derives its
+#                              cookie Secure flag, its CORS origin, the
+#                              WebSocket origin check and the OIDC callback
+#                              from this one value, so a mismatch breaks
+#                              sign-in rather than merely looking wrong
+#   RATE_LIMIT_TRUSTED_PROXIES the Docker network CIDR (e.g. 172.16.0.0/12),
+#                              or every request arrives wearing Traefik's IP
+#                              and the whole deployment shares one auth bucket
+#
+# Requires on the host: a DNS A/AAAA record for MULTICA_DOMAIN pointing here,
+# with inbound 80 and 443 reachable from the internet. Port 80 is not optional
+# — it is where the ACME HTTP-01 challenge is answered.
+#
+# Two routes, and the split is load-bearing. /ws goes straight to the backend
+# because Next.js rewrites forward HTTP only, never the Upgrade handshake a
+# WebSocket needs: routed through the frontend, chat streaming, live issue
+# updates and notifications would fail to connect while ordinary page loads
+# kept working. Everything else goes to the frontend, which already proxies
+# /api, /auth, /v1 and /uploads onward. Both live under one hostname, which
+# the SameSite=Strict session cookies and the OIDC callback depend on.
+
+services:
+  traefik:
+    image: traefik:v3.5
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      # Nothing is published unless it carries traefik.enable=true, so postgres
+      # stays unreachable from outside even though it sits on this network.
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # Plain HTTP exists only to answer the ACME challenge and send everyone
+      # to HTTPS. Traefik routes the challenge ahead of this redirect, so the
+      # two do not fight.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Read-only. Traefik only needs to watch container labels, and a writable
+      # Docker socket inside a container is root on the host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Named volume, not a bind mount: acme.json holds the private key and
+      # must stay 0600, which Traefik gets right on a volume it created.
+      - traefik_acme:/letsencrypt
+
+  frontend:
+    # The 127.0.0.1 port binding from the base file is kept on purpose — it is
+    # what `curl localhost:3000/api/config` uses when diagnosing a deployment
+    # without going out and back through DNS and TLS.
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.multica-web.rule=Host(`${MULTICA_DOMAIN:?set MULTICA_DOMAIN in .env}`)
+      - traefik.http.routers.multica-web.entrypoints=websecure
+      - traefik.http.routers.multica-web.tls.certresolver=le
+      - traefik.http.routers.multica-web.priority=1
+      - traefik.http.services.multica-web.loadbalancer.server.port=3000
+
+  backend:
+    # Only the /ws router below is published. Every other backend path is
+    # reached through the frontend's rewrites, as it is without Traefik.
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.multica-ws.rule=Host(`${MULTICA_DOMAIN:?set MULTICA_DOMAIN in .env}`) && PathPrefix(`/ws`)
+      - traefik.http.routers.multica-ws.entrypoints=websecure
+      - traefik.http.routers.multica-ws.tls.certresolver=le
+      # Explicit, rather than leaning on Traefik ranking the longer rule first.
+      - traefik.http.routers.multica-ws.priority=100
+      - traefik.http.services.multica-ws.loadbalancer.server.port=8080
+
+volumes:
+  traefik_acme:

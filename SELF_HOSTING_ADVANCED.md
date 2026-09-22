@@ -414,6 +414,41 @@ REMOTE_API_URL=http://localhost:8080 pnpm start
 
 In production, put a reverse proxy in front of both the backend and frontend to handle TLS and routing.
 
+Pick one. The Traefik override ships with this repo and needs no proxy configuration of its own, so it is the shortest path from a fresh Compose stack to HTTPS. Caddy and Nginx are documented for deployments that already run one of them, or that need routing this repo does not ship.
+
+### Traefik (bundled Compose override)
+
+Unlike the Caddy and Nginx examples below, this one ships with the repo and needs no proxy config of its own — Traefik reads the routing off container labels and obtains a Let's Encrypt certificate on first request.
+
+```bash
+# In .env
+MULTICA_DOMAIN=multica.example.com
+ACME_EMAIL=ops@example.com
+FRONTEND_ORIGIN=https://multica.example.com
+RATE_LIMIT_TRUSTED_PROXIES=172.16.0.0/12
+```
+
+```bash
+docker compose -f docker-compose.selfhost.yml \
+               -f docker-compose.selfhost.traefik.yml up -d
+```
+
+Prerequisites: a DNS `A`/`AAAA` record for `MULTICA_DOMAIN` pointing at this host, and inbound 80 and 443 from the internet. Port 80 is not optional — it answers the ACME HTTP-01 challenge — but it serves nothing else, redirecting to HTTPS.
+
+Two routes are published. `/ws` goes straight to the backend on 8080; everything else goes to the frontend on 3000, which proxies `/api`, `/auth`, `/v1` and `/uploads` onward. The split is not an optimisation: Next.js rewrites forward HTTP only, never the `Upgrade` handshake, so routing `/ws` through the frontend would leave chat streaming, live issue updates and notifications unable to connect while ordinary page loads kept working. See [WebSocket for LAN / Non-localhost Access](#websocket-for-lan--non-localhost-access).
+
+Three settings are easy to miss, and each fails in a way that does not point at itself:
+
+| Setting | What breaks without it |
+|---|---|
+| `FRONTEND_ORIGIN=https://${MULTICA_DOMAIN}` | Session cookies lose their `Secure` flag, the WebSocket origin check rejects the upgrade with `403`, and the OIDC callback is derived for the wrong host |
+| `RATE_LIMIT_TRUSTED_PROXIES` | Every request arrives wearing Traefik's container IP, so the whole deployment shares one per-IP auth bucket — `/auth/send-code` becomes 5 req/min site-wide |
+| DNS resolving **before** first start | Let's Encrypt caches failed validations; a wrong record means waiting out the retry window rather than just fixing it |
+
+Certificates live in the `traefik_acme` named volume, so they survive `down` / `up` and are not re-issued on every restart. The Docker socket is mounted read-only: Traefik only needs to watch labels, and a writable socket in a container is root on the host.
+
+To stay on the published images while using this, leave out `docker-compose.selfhost.build.yml`; the overrides are independent and compose in any order.
+
 ### Caddy (Recommended)
 
 **Single-domain layout** — frontend and backend served on the same hostname (this is what `docker-compose.selfhost.yml` defaults to):

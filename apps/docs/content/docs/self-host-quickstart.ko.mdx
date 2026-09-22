@@ -113,6 +113,8 @@ MULTICA_PUBLIC_URL=https://api.example.com
 
 이 설정에서는 모든 브라우저 트래픽이 app 도메인을 거치고 cookie가 도메인을 넘지 않으므로 `COOKIE_DOMAIN`을 설정할 필요가 없습니다. 브라우저에서 api 도메인에 직접 접근하게 바꾼다면 반드시 설정해야 합니다. [환경 변수](/environment-variables)를 참고하세요.
 
+proxy 설정을 직접 작성하고 싶지 않다면, 이 저장소에 Traefik override가 함께 들어 있습니다. routing은 컨테이너 label에서 읽고 Let's Encrypt 인증서도 자동으로 발급합니다 — [리버스 프록시](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md#reverse-proxy) 참고. 이 페이지의 나머지는 Caddy를 사용합니다.
+
 그런 다음 DNS를 설정하고 Caddy로 로컬 port를 proxy합니다.
 
 ```text
