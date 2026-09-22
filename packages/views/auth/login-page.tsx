@@ -23,6 +23,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import type { User } from "@multica/core/types";
+import { KeyRound } from "lucide-react";
 import { useT } from "../i18n";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,20 @@ interface GoogleAuthConfig {
   redirectUri: string;
   /** Opaque state passed through Google OAuth (e.g. "platform:desktop"). */
   state?: string;
+}
+
+/**
+ * OIDC single sign-on. Unlike Google's, the browser holds no provider details:
+ * `startUrl` points at the API endpoint that mints the state, nonce and PKCE
+ * challenge and redirects to the identity provider.
+ */
+interface SsoAuthConfig {
+  /** API endpoint that begins the flow. Omit when `onSsoLogin` drives it
+   *  instead — desktop opens the web login page in a browser, because the
+   *  session has to be established where the provider can reach it. */
+  startUrl?: string;
+  /** Operator-chosen label ("Keycloak", "Okta"). Empty falls back to generic wording. */
+  providerName?: string;
 }
 
 interface CliCallbackConfig {
@@ -51,12 +66,23 @@ interface LoginPageProps {
   onSuccess: () => void;
   /** Google OAuth config. Omit to disable Google login. */
   google?: GoogleAuthConfig;
+  /** OIDC single sign-on config. Omit to hide the SSO button. */
+  sso?: SsoAuthConfig;
   /** CLI callback config for authorizing CLI tools. */
   cliCallback?: CliCallbackConfig;
   /** Called after a token is obtained (e.g. to set cookies). */
   onTokenObtained?: () => void;
   /** Override Google login handler (e.g. desktop opens browser externally). When provided, renders the Google button even if `google` config is omitted. */
   onGoogleLogin?: () => void;
+  /** Override SSO handler (desktop opens the web login in a browser). Unlike
+   *  `onGoogleLogin` this does NOT by itself render the button — desktop only
+   *  knows the flow exists once the server has declared it, so the caller
+   *  still passes `sso`. */
+  onSsoLogin?: () => void;
+  /** Message to show on arrival, e.g. a reason a redirected SSO attempt
+   *  failed. Seeds the same error slot the form writes to, so a later
+   *  submission replaces it rather than stacking a second message. */
+  initialError?: string;
   /** Slot rendered at the bottom of the sign-in card, below the
    *  Google button. The web shell uses it for a "Prefer the desktop
    *  app?" prompt; desktop omits it (a download prompt inside the app
@@ -67,6 +93,12 @@ interface LoginPageProps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Shown when the operator has not named their identity provider. "SSO" is what
+ * an employee is told to look for far more often than the product behind it.
+ */
+const DEFAULT_SSO_PROVIDER_NAME = "SSO";
 
 export function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
@@ -102,9 +134,12 @@ export function LoginPage({
   logo,
   onSuccess,
   google,
+  sso,
   cliCallback,
   onTokenObtained,
   onGoogleLogin,
+  onSsoLogin,
+  initialError,
   extra,
 }: LoginPageProps) {
   const { t } = useT("auth");
@@ -112,7 +147,7 @@ export function LoginPage({
   const [step, setStep] = useState<"email" | "code" | "cli_confirm">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError ?? "");
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [existingUser, setExistingUser] = useState<User | null>(null);
@@ -295,6 +330,17 @@ export function LoginPage({
     });
     if (google.state) params.set("state", google.state);
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  };
+
+  const handleSsoLogin = () => {
+    if (onSsoLogin) {
+      onSsoLogin();
+      return;
+    }
+    if (!sso?.startUrl) return;
+    // A full navigation, not a fetch: the server answers with a redirect to
+    // the identity provider and sets the login transaction cookie on the way.
+    window.location.href = sso.startUrl;
   };
 
   // -------------------------------------------------------------------------
@@ -495,6 +541,21 @@ export function LoginPage({
                 />
               </svg>
               {t(($) => $.signin.google)}
+            </Button>
+          )}
+          {sso && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={handleSsoLogin}
+              disabled={loading}
+            >
+              <KeyRound className="mr-2 h-4 w-4" />
+              {t(($) => $.signin.sso, {
+                provider: sso.providerName || DEFAULT_SSO_PROVIDER_NAME,
+              })}
             </Button>
           )}
           {extra && <div className="w-full pt-1 text-center">{extra}</div>}

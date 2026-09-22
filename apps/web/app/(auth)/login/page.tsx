@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
@@ -61,6 +61,9 @@ function LoginPageContent() {
   const qc = useQueryClient();
   const { t } = useT("auth");
   const googleClientId = useConfigStore((state) => state.googleClientId);
+  const oidcEnabled = useConfigStore((state) => state.oidcEnabled);
+  const oidcProviderName = useConfigStore((state) => state.oidcProviderName);
+  const oidcStartPath = useConfigStore((state) => state.oidcStartPath);
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const searchParams = useSearchParams();
@@ -75,6 +78,13 @@ function LoginPageContent() {
   // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
   // cannot bounce the user off-origin after a successful login.
   const nextUrl = sanitizeNextUrl(searchParams.get("next"));
+
+  // Set by the API after it has established the session and sent the browser
+  // back here. The routing effect below picks the session up like any other
+  // already-authenticated arrival; this flag only suppresses the sign-in form
+  // while that happens, so the user does not see it flash.
+  const ssoCompleting = searchParams.get("sso") === "1";
+  const ssoErrorCode = searchParams.get("sso_error");
 
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
   const [desktopError, setDesktopError] = useState("");
@@ -165,6 +175,54 @@ function LoginPageContent() {
     .filter(Boolean)
     .join(",") || undefined;
 
+  // The SSO button navigates straight to the API, which owns the state, nonce
+  // and PKCE challenge. The routing parameters ride as query values and come
+  // back server-sealed, so nothing here has to be re-validated on return.
+  const ssoStartUrl = useMemo(() => {
+    if (!oidcEnabled || !oidcStartPath) return undefined;
+    const params = new URLSearchParams();
+    if (platform === "desktop") params.set("platform", "desktop");
+    if (nextUrl) params.set("next", nextUrl);
+    if (cliCallbackRaw && validateCliCallback(cliCallbackRaw)) {
+      params.set("cli_callback", cliCallbackRaw);
+      if (cliState) params.set("cli_state", cliState);
+    }
+    const query = params.toString();
+    return `${api.getBaseUrl()}${oidcStartPath}${query ? `?${query}` : ""}`;
+  }, [oidcEnabled, oidcStartPath, platform, nextUrl, cliCallbackRaw, cliState]);
+
+  // The API names the rule that stopped the sign-in; each code has its own
+  // copy so the user is told what to do instead of "try again".
+  const ssoError = (() => {
+    switch (ssoErrorCode) {
+      case null:
+        return undefined;
+      case "not_configured":
+        return t(($) => $.web.sso.not_configured);
+      case "access_denied":
+        return t(($) => $.web.sso.access_denied);
+      case "provider_error":
+        return t(($) => $.web.sso.provider_error);
+      case "state_invalid":
+        return t(($) => $.web.sso.state_invalid);
+      case "code_invalid":
+        return t(($) => $.web.sso.code_invalid);
+      case "account_disabled":
+        return t(($) => $.web.sso.account_disabled);
+      case "signup_prohibited":
+        return t(($) => $.web.sso.signup_prohibited);
+      case "email_not_allowed":
+        return t(($) => $.web.sso.email_not_allowed);
+      case "no_email":
+        return t(($) => $.web.sso.no_email);
+      case "email_unverified":
+        return t(($) => $.web.sso.email_unverified);
+      default:
+        // A code this build does not know about still failed the sign-in.
+        return t(($) => $.web.sso.login_failed);
+    }
+  })();
+
   // While the desktop handoff is in progress (or has produced a token/error),
   // render a dedicated screen instead of flashing the login form or redirecting
   // away to a workspace page.
@@ -215,9 +273,31 @@ function LoginPageContent() {
     );
   }
 
+  // Returning from the identity provider with the session already established.
+  // Showing the sign-in form here would ask the user to do what they just did;
+  // the routing effect above is what actually moves them on. If auth settles
+  // logged out anyway, fall through to the form rather than spin forever.
+  if (ssoCompleting && !cliCallbackRaw && (isLoading || user)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Card className="w-full max-w-sm">
+          <CardHeader className="text-center">
+            <CardTitle className="text-display-sm">
+              {t(($) => $.web.sso.signing_in)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <LoginPage
       onSuccess={handleSuccess}
+      initialError={ssoError}
       google={
         googleClientId
           ? {
@@ -225,6 +305,11 @@ function LoginPageContent() {
               redirectUri: `${window.location.origin}/auth/callback`,
               state: googleState,
             }
+          : undefined
+      }
+      sso={
+        ssoStartUrl
+          ? { startUrl: ssoStartUrl, providerName: oidcProviderName }
           : undefined
       }
       cliCallback={

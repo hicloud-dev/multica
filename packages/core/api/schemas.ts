@@ -734,6 +734,15 @@ export interface AppConfigResponse {
   cdn_signed?: boolean;
   allow_signup: boolean;
   google_client_id?: string;
+  /** Whether this deployment has an OIDC identity provider wired up. Absent
+   * on servers without SSO and on older servers; treat that as false. */
+  oidc_enabled?: boolean;
+  /** Label for the SSO button ("Keycloak", "Okta", "Acme SSO"). */
+  oidc_provider_name?: string;
+  /** API-relative path that starts the SSO flow. The server owns the whole
+   * redirect, so the browser never needs the client id or the provider's
+   * authorization endpoint. */
+  oidc_start_path?: string;
   posthog_key?: string;
   posthog_host?: string;
   analytics_environment?: string;
@@ -988,6 +997,9 @@ export const AppConfigSchema = z.object({
   cdn_signed: BooleanWithDefaultSchema(false),
   allow_signup: BooleanWithDefaultSchema(true),
   google_client_id: OptionalStringSchema,
+  oidc_enabled: BooleanWithDefaultSchema(false).optional(),
+  oidc_provider_name: OptionalStringSchema,
+  oidc_start_path: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
   posthog_host: OptionalStringSchema,
   analytics_environment: OptionalStringSchema,
@@ -1007,6 +1019,11 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_signed: false,
   allow_signup: true,
   google_client_id: "",
+  // Fail closed: an unreadable config must not render an SSO button that
+  // would send the user to an endpoint this server may not have.
+  oidc_enabled: false,
+  oidc_provider_name: "",
+  oidc_start_path: "",
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,

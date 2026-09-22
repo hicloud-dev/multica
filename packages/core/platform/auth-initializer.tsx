@@ -69,6 +69,11 @@ export function AuthInitializer({
         configStore.getState().setAuthConfig({
           allowSignup: cfg.allow_signup,
           googleClientId: cfg.google_client_id,
+          // Absent on every server without SSO wired up, and on older
+          // servers — both cases mean "no SSO button".
+          oidcEnabled: cfg.oidc_enabled === true,
+          oidcProviderName: cfg.oidc_provider_name,
+          oidcStartPath: cfg.oidc_start_path,
           // Old servers omit this field — treat that as "creation allowed"
           // (the managed-cloud default) rather than blocking the UI.
           workspaceCreationDisabled: cfg.workspace_creation_disabled === true,

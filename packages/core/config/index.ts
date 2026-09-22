@@ -9,6 +9,16 @@ interface ConfigState {
   cdnSigned: boolean;
   allowSignup: boolean;
   googleClientId: string;
+  // OIDC single sign-on, published by /api/config so a self-hosted operator
+  // can wire an identity provider without rebuilding the frontend image.
+  // Defaults to disabled: a server that says nothing has no SSO endpoint, and
+  // a button pointing at one would dead-end.
+  oidcEnabled: boolean;
+  // Label for the SSO button. Empty means "use the generic wording".
+  oidcProviderName: string;
+  // API-relative path that begins the flow. The server owns the redirect, so
+  // this is the only OIDC detail the browser ever needs.
+  oidcStartPath: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -44,6 +54,9 @@ interface ConfigState {
   setAuthConfig: (config: {
     allowSignup: boolean;
     googleClientId?: string;
+    oidcEnabled?: boolean;
+    oidcProviderName?: string;
+    oidcStartPath?: string;
     workspaceCreationDisabled?: boolean;
     vcsIntegrationAvailable?: boolean;
   }) => void;
@@ -63,6 +76,9 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnSigned: false,
   allowSignup: true,
   googleClientId: "",
+  oidcEnabled: false,
+  oidcProviderName: "",
+  oidcStartPath: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
@@ -76,9 +92,23 @@ export const configStore = createStore<ConfigState>((set) => ({
   setAuthConfig: ({
     allowSignup,
     googleClientId = "",
+    oidcEnabled = false,
+    oidcProviderName = "",
+    oidcStartPath = "",
     workspaceCreationDisabled = false,
     vcsIntegrationAvailable = false,
-  }) => set({ allowSignup, googleClientId, workspaceCreationDisabled, vcsIntegrationAvailable }),
+  }) =>
+    set({
+      allowSignup,
+      googleClientId,
+      // Both halves are required to render a working button: a server that
+      // declares SSO but no start path cannot be entered, so treat it as off.
+      oidcEnabled: oidcEnabled === true && oidcStartPath !== "",
+      oidcProviderName,
+      oidcStartPath,
+      workspaceCreationDisabled,
+      vcsIntegrationAvailable,
+    }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),

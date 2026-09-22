@@ -411,6 +411,80 @@ describe("LoginPage", () => {
   });
 
   // -------------------------------------------------------------------------
+  // OIDC single sign-on
+  // -------------------------------------------------------------------------
+
+  it("labels the SSO button with the operator's provider name", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        sso={{ startUrl: "https://api.test/auth/oidc/start", providerName: "Keycloak" }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /continue with keycloak/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to generic SSO wording when the provider is unnamed", () => {
+    renderWithI18n(
+      <LoginPage onSuccess={onSuccess} sso={{ startUrl: "https://api.test/auth/oidc/start" }} />,
+    );
+    expect(
+      screen.getByRole("button", { name: /continue with sso/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the SSO button when the server has not declared a provider", () => {
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
+    expect(
+      screen.queryByRole("button", { name: /continue with/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("navigates to the server's start endpoint, which owns state and PKCE", async () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        sso={{ startUrl: "https://api.test/auth/oidc/start?next=%2Finbox", providerName: "Keycloak" }}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue with keycloak/i }));
+
+    expect(window.location.href).toBe(
+      "https://api.test/auth/oidc/start?next=%2Finbox",
+    );
+  });
+
+  it("lets the host drive the SSO flow instead of navigating", async () => {
+    // Desktop opens the web login page in a browser rather than navigating the
+    // Electron window, so the override has to win over startUrl.
+    const onSsoLogin = vi.fn();
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        sso={{ providerName: "Keycloak" }}
+        onSsoLogin={onSsoLogin}
+      />,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /continue with keycloak/i }));
+
+    expect(onSsoLogin).toHaveBeenCalledTimes(1);
+    expect(window.location.href).toBe("http://localhost:3000");
+  });
+
+  it("shows why a redirected SSO attempt failed", () => {
+    renderWithI18n(
+      <LoginPage onSuccess={onSuccess} initialError="This account is disabled." />,
+    );
+    expect(screen.getByText("This account is disabled.")).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
   // CLI callback — existing session
   // -------------------------------------------------------------------------
 
