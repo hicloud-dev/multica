@@ -27,6 +27,7 @@ images:
 #     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 16)" \
 #     --from-literal=RESEND_API_KEY="" \
 #     --from-literal=GOOGLE_CLIENT_SECRET="" \
+#     --from-literal=OIDC_CLIENT_SECRET="" \
 #     --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
 #     --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
 #
@@ -37,6 +38,7 @@ images:
 #     --from-literal=DATABASE_URL="postgres://user:pass@host:5432/multica?sslmode=require" \
 #     --from-literal=RESEND_API_KEY="" \
 #     --from-literal=GOOGLE_CLIENT_SECRET="" \
+#     --from-literal=OIDC_CLIENT_SECRET="" \
 #     --from-literal=CLOUDFRONT_PRIVATE_KEY="" \
 #     --from-literal=MULTICA_DEV_VERIFICATION_CODE=""
 #
@@ -150,6 +152,20 @@ backend:
       url: ""
     googleClientId: ""
     googleRedirectUri: http://multica.dev.lan/auth/callback
+    # OIDC single sign-on. Leave issuer empty to keep SSO off; the client
+    # secret lives in the pre-created Secret above, not here.
+    oidc:
+      # Base URL serving /.well-known/openid-configuration. For Keycloak:
+      # https://sso.example.com/realms/<realm>
+      issuer: ""
+      clientId: ""
+      # Label on the sign-in button. Defaults to "SSO" when empty.
+      providerName: ""
+      # Comma- or space-separated; defaults to "openid email profile".
+      scopes: ""
+      # Register <origin>/auth/oidc/callback on the provider's client.
+      # Empty derives the origin from MULTICA_PUBLIC_URL, else MULTICA_APP_URL.
+      redirectUri: ""
     s3Bucket: ""
     s3Region: us-west-2
     cloudfrontDomain: ""

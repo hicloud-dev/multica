@@ -26,6 +26,11 @@ data:
   MULTICA_CLOUD_URL: {{ .Values.backend.config.cloud.url | quote }}
   GOOGLE_CLIENT_ID: {{ .Values.backend.config.googleClientId | quote }}
   GOOGLE_REDIRECT_URI: {{ .Values.backend.config.googleRedirectUri | quote }}
+  OIDC_ISSUER: {{ .Values.backend.config.oidc.issuer | quote }}
+  OIDC_CLIENT_ID: {{ .Values.backend.config.oidc.clientId | quote }}
+  OIDC_PROVIDER_NAME: {{ .Values.backend.config.oidc.providerName | quote }}
+  OIDC_SCOPES: {{ .Values.backend.config.oidc.scopes | quote }}
+  OIDC_REDIRECT_URI: {{ .Values.backend.config.oidc.redirectUri | quote }}
   S3_BUCKET: {{ .Values.backend.config.s3Bucket | quote }}
   S3_REGION: {{ .Values.backend.config.s3Region | quote }}
   CLOUDFRONT_DOMAIN: {{ .Values.backend.config.cloudfrontDomain | quote }}
