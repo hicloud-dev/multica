@@ -136,7 +136,13 @@ curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration 
 
 The callback URL is derived for you: `MULTICA_PUBLIC_URL` when set, otherwise `MULTICA_APP_URL` (or `FRONTEND_ORIGIN`). Set `OIDC_REDIRECT_URI` explicitly only if neither describes the origin the provider should redirect to.
 
-### 3. Restart the API
+### 3. Recreate the API container
+
+```bash
+docker compose -f docker-compose.selfhost.yml up -d backend
+```
+
+Use `up -d`, not `restart`: Compose fixes a container's environment when it is **created**, so `restart` replays the old values and your new `OIDC_*` settings never reach the server.
 
 The sign-in page then shows a **Continue with Keycloak** button. It reads everything from `/api/config` at runtime, so the frontend image needs no rebuild. The desktop app shows the same button and opens your browser to complete the flow.
 

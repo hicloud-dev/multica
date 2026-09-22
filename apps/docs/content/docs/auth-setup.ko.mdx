@@ -136,7 +136,13 @@ curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration 
 
 callback URL은 자동으로 유도됩니다. `MULTICA_PUBLIC_URL`이 설정되어 있으면 그것을, 없으면 `MULTICA_APP_URL`(또는 `FRONTEND_ORIGIN`)을 사용합니다. 둘 다 공급자가 리디렉션할 origin을 나타내지 못할 때만 `OIDC_REDIRECT_URI`를 직접 지정하세요.
 
-### 3. API 재시작
+### 3. API 컨테이너 재생성
+
+```bash
+docker compose -f docker-compose.selfhost.yml up -d backend
+```
+
+`restart`가 아니라 `up -d`를 쓰세요. Compose는 컨테이너를 **생성할 때** 환경 변수를 고정하므로, `restart`는 예전 값을 그대로 사용해 새 `OIDC_*` 설정이 반영되지 않습니다.
 
 로그인 페이지에 **Keycloak(으)로 계속** 버튼이 표시됩니다. 설정은 런타임에 `/api/config`에서 읽으므로 프런트엔드 이미지를 다시 빌드할 필요가 없습니다. 데스크톱 앱에도 같은 버튼이 나타나며, 브라우저를 열어 로그인을 마칩니다.
 

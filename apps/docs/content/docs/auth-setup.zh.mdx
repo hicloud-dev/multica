@@ -136,7 +136,13 @@ curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration 
 
 回调地址会自动推导：优先使用 `MULTICA_PUBLIC_URL`，未设置时使用 `MULTICA_APP_URL`（或 `FRONTEND_ORIGIN`）。只有当两者都无法描述身份提供商应跳转的地址时，才需要显式设置 `OIDC_REDIRECT_URI`。
 
-### 3. 重启 API
+### 3. 重建 API 容器
+
+```bash
+docker compose -f docker-compose.selfhost.yml up -d backend
+```
+
+请用 `up -d` 而不是 `restart`：Compose 在**创建**容器时固定环境变量，`restart` 会沿用旧值，新的 `OIDC_*` 配置不会生效。
 
 登录页随即显示 **使用 Keycloak 登录** 按钮。所有配置都在运行时从 `/api/config` 读取，无需重新构建前端镜像。桌面应用会显示同样的按钮，并打开浏览器完成登录。
 
