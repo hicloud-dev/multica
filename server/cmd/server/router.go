@@ -20,6 +20,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/auth/oidc"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/entitlement"
@@ -446,6 +447,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.InvitationRateLimiters = handler.NewMemoryInvitationRateLimiters(invitationRateLimits)
 	h.Metrics = opts.BusinessMetrics
 	h.FeatureFlags = opts.FeatureFlags
+	// OIDC single sign-on is opt-in: an unset OIDC_ISSUER leaves h.OIDC nil,
+	// /api/config omits the SSO fields, and the login page renders exactly as
+	// it did before. A partial configuration is called out here rather than at
+	// the first login attempt, where the only symptom is a missing button.
+	if oidcCfg := oidc.ConfigFromEnv(); oidcCfg.Enabled() {
+		h.OIDC = oidc.New(oidcCfg, nil)
+		slog.Info("oidc single sign-on enabled", "issuer", oidcCfg.Issuer, "provider_name", oidcCfg.ProviderName)
+	} else if oidcCfg.Issuer != "" || oidcCfg.ClientID != "" || oidcCfg.ClientSecret != "" {
+		slog.Warn("oidc single sign-on disabled: configuration is incomplete",
+			"have_issuer", oidcCfg.Issuer != "",
+			"have_client_id", oidcCfg.ClientID != "",
+			"have_client_secret", oidcCfg.ClientSecret != "",
+			"reason", "OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET are all required")
+	}
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
@@ -1472,6 +1487,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
+	// OIDC single sign-on. Both endpoints are browser redirects, so the
+	// limiter is generous: an enterprise deployment behind one NAT egress IP
+	// is exactly the audience for SSO, and a limit tuned for credential
+	// stuffing would lock out an office signing in after a deploy. The real
+	// gate on the callback is the sealed transaction cookie — without one, no
+	// request to the provider is ever made.
+	ssoRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_SSO", 60), time.Minute, trustedProxies)
+	r.With(ssoRL).Get(handler.OIDCStartPath, h.OIDCStart)
+	r.With(ssoRL).Get(handler.OIDCCallbackPath, h.OIDCCallback)
 	r.Post("/auth/logout", h.Logout)
 
 	// Public API

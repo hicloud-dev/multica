@@ -25,6 +25,18 @@ type AppConfig struct {
 	// toggle signup or wire Google OAuth.
 	AllowSignup    bool   `json:"allow_signup"`
 	GoogleClientID string `json:"google_client_id,omitempty"`
+	// OIDCEnabled tells the login page to offer the single sign-on button.
+	// Unlike Google's, no client id is published: the OIDC flow is started by
+	// this server at OIDCStartPath, so the browser never needs the client id
+	// or the provider's authorization endpoint. Omitted when false so a
+	// deployment without SSO keeps the previous response shape.
+	OIDCEnabled bool `json:"oidc_enabled,omitempty"`
+	// OIDCProviderName labels that button ("Keycloak", "Okta", "Acme SSO").
+	OIDCProviderName string `json:"oidc_provider_name,omitempty"`
+	// OIDCStartPath is where the button sends the browser, relative to this
+	// API's origin. Published rather than hardcoded in the frontend so the
+	// route can move without stranding installed desktop clients.
+	OIDCStartPath string `json:"oidc_start_path,omitempty"`
 	// WorkspaceCreationDisabled mirrors the server-side
 	// DISABLE_WORKSPACE_CREATION env var so the UI can hide every
 	// "Create workspace" affordance on self-hosted instances. Omitted
@@ -98,8 +110,8 @@ type AppConfig struct {
 
 // GetConfig is mounted on the public (unauthenticated) route group because
 // the web app calls it before login to decide whether to render the Google
-// sign-in button and signup UI. Only add fields here that are safe to expose
-// to anonymous callers — never user- or tenant-scoped data.
+// and single sign-on buttons and the signup UI. Only add fields here that are
+// safe to expose to anonymous callers — never user- or tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	config := AppConfig{
 		// A property of this build, not of the deployment: if this code is
@@ -110,6 +122,11 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		AllowSignup:                        os.Getenv("ALLOW_SIGNUP") != "false",
 		GoogleClientID:                     os.Getenv("GOOGLE_CLIENT_ID"),
 		WorkspaceCreationDisabled:          os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
+	}
+	if p, ok := h.oidcProvider(); ok {
+		config.OIDCEnabled = true
+		config.OIDCProviderName = p.Config().ProviderName
+		config.OIDCStartPath = OIDCStartPath
 	}
 	if h.Storage != nil {
 		config.CdnDomain = h.Storage.CdnDomain()

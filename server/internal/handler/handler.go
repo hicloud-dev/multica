@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/auth/oidc"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dbreader"
@@ -254,6 +255,12 @@ type Handler struct {
 	CloudRuntime                 cloudRuntimeProxy
 	// Test-only HTTP override; nil uses the default client in production.
 	googleOAuthHTTPClient *http.Client
+	// OIDC is the configured OpenID Connect provider for single sign-on, or
+	// nil when the deployment has not set OIDC_ISSUER / OIDC_CLIENT_ID /
+	// OIDC_CLIENT_SECRET. Wired in cmd/server/router.go after handler.New;
+	// every OIDC endpoint and /api/config read it through oidcProvider(), so
+	// an unconfigured deployment simply has no SSO surface.
+	OIDC *oidc.Provider
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 403 in that case so a misconfigured self-host

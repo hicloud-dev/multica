@@ -386,3 +386,43 @@ func ValidateCSRF(r *http.Request) bool {
 		return tokenCSRFSignature(authCookie.Value, nonce)
 	})
 }
+
+// SetTransactionCookie writes a short-lived HttpOnly cookie scoped to one
+// path, reusing the Domain and Secure attributes the session cookies derive
+// from the deployment's environment.
+//
+// SameSite is Lax, not the Strict used for sessions: the value exists to be
+// read on the way back from an external identity provider, and that return
+// trip is a cross-site top-level navigation — exactly what Strict withholds.
+// Lax still keeps the cookie off cross-site subresource and form-POST
+// requests, which is the property a login transaction needs.
+func SetTransactionCookie(w http.ResponseWriter, name, value, path string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     path,
+		Domain:   cookieDomain(),
+		MaxAge:   int(ttl.Seconds()),
+		Expires:  time.Now().Add(ttl),
+		HttpOnly: true,
+		Secure:   isSecureCookie(),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// ClearTransactionCookie expires a cookie written by SetTransactionCookie.
+// The attributes have to match the ones it was set with, or the browser keeps
+// the original cookie alongside the expired one.
+func ClearTransactionCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     path,
+		Domain:   cookieDomain(),
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+		HttpOnly: true,
+		Secure:   isSecureCookie(),
+		SameSite: http.SameSiteLaxMode,
+	})
+}
