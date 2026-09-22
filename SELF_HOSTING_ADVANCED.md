@@ -88,6 +88,22 @@ https://multica.example.com/auth/oidc/callback
 
 Accounts are matched by the `email` claim, and a sign-in is refused when the provider reports that address as unverified. Set `ALLOWED_EMAIL_DOMAINS` if your provider federates external identities. Changes take effect after restarting the backend; the web UI reads the rest from `/api/config` at runtime. See [Authentication Setup](https://docs.multica.ai/docs/auth-setup#single-sign-on-oidc) for the full walkthrough.
 
+### Landing Page (Optional)
+
+By default `/` serves the Multica landing page to visitors without a session. On a private instance that page sells software the visitor already runs, so most self-hosts want the sign-in screen instead:
+
+```dotenv
+MULTICA_ROOT_REDIRECT=/login
+```
+
+| Visitor | Without the variable | With `/login` |
+|---|---|---|
+| Signed in, has opened a workspace | Straight to that workspace | Unchanged |
+| Signed in, first login | Landing page, then a client-side redirect | Straight to `/login`, which resolves their destination |
+| Signed out | Landing page | Sign-in screen |
+
+Only same-origin paths are accepted — a value that would leave the site is ignored and the landing page is served, rather than bouncing every visitor who reaches the root. The variable is read by the Next.js proxy at request time, so it takes effect on a frontend restart without an image rebuild. The landing page itself stays reachable at `/homepage`.
+
 ### Signup Controls (Optional)
 
 | Variable | Description |

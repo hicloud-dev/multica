@@ -5,6 +5,7 @@ import {
   resolveLocaleFromSignals,
 } from "./lib/locale-routing";
 import { runtimeRewriteDestination } from "./config/runtime-urls";
+import { resolveRootRedirect } from "./config/root-redirect";
 import { isOfficialMarketingHost } from "./lib/public-host";
 
 // Old workspace-scoped route segments that existed before the URL refactor
@@ -104,6 +105,29 @@ export function proxy(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = `/${lastSlug}/issues`;
     return NextResponse.redirect(url);
+  }
+
+  // --- Root path on a private instance: skip the landing page ---
+  // Runs after the rule above so a signed-in user with a workspace still goes
+  // straight there rather than bouncing through the sign-in screen. What is
+  // left is everyone the landing page would have greeted: signed-out visitors,
+  // and the first-login case whose workspace cookie does not exist yet. Both
+  // are served better by /login, which resolves an authenticated arrival to
+  // its real destination anyway.
+  //
+  // The official marketing origins are excluded for the same reason as above:
+  // `/` must stay public there, session or not.
+  if (pathname === "/" && !isOfficialMarketingHost(req.nextUrl.hostname)) {
+    const rootRedirect = resolveRootRedirect(process.env);
+    if (rootRedirect) {
+      // Resolving against the current URL keeps a path with a query string
+      // intact, and makes the origin comparison the final say on whether this
+      // redirect can leave the site.
+      const target = new URL(rootRedirect, req.nextUrl);
+      if (target.origin === req.nextUrl.origin) {
+        return NextResponse.redirect(target);
+      }
+    }
   }
 
   // --- Default: forward locale header to RSC, no redirect/rewrite ---

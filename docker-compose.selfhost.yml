@@ -239,6 +239,9 @@ services:
       DOCS_URL: ${DOCS_URL:-}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
+      # Read at request time by the Next.js proxy, so a change needs a restart
+      # of this container but not a rebuild of the image.
+      MULTICA_ROOT_REDIRECT: ${MULTICA_ROOT_REDIRECT:-}
     restart: unless-stopped
 
 volumes:
