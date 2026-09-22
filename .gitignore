@@ -20,6 +20,12 @@ dist-electron
 # env
 .env*
 !.env.example
+
+# ACME state. The bundled Traefik override keeps this in a named volume,
+# so it never lands here — but every Traefik tutorial online says to bind
+# mount it, and the file holds the account key and the certificate key.
+acme.json
+acme.json.*
 # Desktop production config is public (backend URL, etc.) — track it so
 # `pnpm package` produces a release-ready build without extra setup.
 !apps/desktop/.env.production
