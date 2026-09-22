@@ -30,7 +30,11 @@
 
 services:
   traefik:
-    image: traefik:v3.5
+    # Not below v3.6. Older tags talk to the Docker socket with API version
+    # 1.24, and Docker Engine 29 dropped everything under 1.44 — the provider
+    # then fails on a retry loop and discovers no routers at all, so Traefik
+    # answers 404 for every host while looking perfectly healthy.
+    image: traefik:v3.7
     restart: unless-stopped
     command:
       - --providers.docker=true
@@ -48,6 +52,15 @@ services:
       - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
       - --certificatesresolvers.le.acme.httpchallenge=true
       - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+      # While setting DNS and firewall up, point this at Let's Encrypt's
+      # staging CA. Production allows only 5 FAILED validations per hostname
+      # per hour, and Traefik retries on its own after every restart and
+      # config change — so a domain that is not reachable yet burns the quota
+      # faster than a person can. Staging issues an untrusted certificate the
+      # browser will warn about, which is the point: it proves the challenge
+      # path works without spending the real budget. Remove the line and
+      # `docker compose down -v` the traefik_acme volume to switch back.
+      # - --certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
     ports:
       - "80:80"
       - "443:443"
