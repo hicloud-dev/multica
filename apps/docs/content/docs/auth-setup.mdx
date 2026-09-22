@@ -97,6 +97,72 @@ Do not enable a fixed code on a publicly reachable instance. The production comb
 
 The URLs in the Google Console and in `GOOGLE_REDIRECT_URI` must match exactly, including protocol, port, and trailing slash. Once configured, the sign-in page shows a Google sign-in button; the frontend image needs no rebuild.
 
+## Single sign-on (OIDC)
+
+Multica speaks standard OpenID Connect, so any provider that publishes a discovery document works: Keycloak, Authentik, Okta, Auth0, Entra ID. The walkthrough below uses Keycloak; the variables are the same everywhere.
+
+### 1. Register a client with your provider
+
+In Keycloak, open your realm and create a client:
+
+- **Client type**: `OpenID Connect`
+- **Client authentication**: `On` — Multica is a confidential client and always sends a secret
+- **Valid redirect URIs**: the callback below, exactly
+
+```text
+https://multica.example.com/auth/oidc/callback
+```
+
+<Callout type="warning">
+Providers match this byte-for-byte, so the protocol, port and trailing slash all have to agree. Use your Multica origin — the same host you sign in at. If your API runs on a separate host, use the **API** origin instead, because that is where `/auth/oidc/callback` is served.
+</Callout>
+
+Copy the generated client secret from the client's **Credentials** tab.
+
+### 2. Configure Multica
+
+```dotenv
+OIDC_ISSUER=https://sso.example.com/realms/multica
+OIDC_CLIENT_ID=multica
+OIDC_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OIDC_PROVIDER_NAME=Keycloak
+```
+
+`OIDC_ISSUER` is the base URL whose `/.well-known/openid-configuration` describes the provider — for Keycloak, `<base>/realms/<realm>`. Confirm it before restarting:
+
+```bash
+curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration | head
+```
+
+The callback URL is derived for you: `MULTICA_PUBLIC_URL` when set, otherwise `MULTICA_APP_URL` (or `FRONTEND_ORIGIN`). Set `OIDC_REDIRECT_URI` explicitly only if neither describes the origin the provider should redirect to.
+
+### 3. Restart the API
+
+The sign-in page then shows a **Continue with Keycloak** button. It reads everything from `/api/config` at runtime, so the frontend image needs no rebuild. The desktop app shows the same button and opens your browser to complete the flow.
+
+### How accounts are matched
+
+Multica identifies people by the `email` claim: an address that already has a Multica account signs in to that account, and anything else creates a new one subject to the [signup restrictions](#signup-restrictions) below. Two consequences worth knowing before you roll this out:
+
+- **The provider must send an email.** Grant the `email` scope and make sure the claim is mapped into the ID token or the userinfo response.
+- **A sign-in is refused when the provider reports the address as unverified** (`email_verified: false`), because account matching by email would otherwise let anyone who can self-register at your IdP claim a colleague's account. A provider that omits the claim entirely is accepted.
+
+Set `ALLOWED_EMAIL_DOMAINS` to your corporate domain if your provider federates external identities.
+
+### Scopes
+
+`openid email profile` is requested by default. Add more with `OIDC_SCOPES` (comma- or space-separated); `openid` is added back automatically if you leave it out.
+
+### Troubleshooting
+
+| What you see | What it means |
+|---|---|
+| No SSO button | One of `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` is unset. The API logs which at startup |
+| "Single sign-on is not configured" | `MULTICA_APP_URL`, `MULTICA_PUBLIC_URL` and `OIDC_REDIRECT_URI` are all empty, so no callback URL can be derived |
+| "Your identity provider rejected the request" | The client id, secret or redirect URI does not match what the provider has registered |
+| "This sign-in attempt expired or was already used" | The login took longer than 15 minutes, or the browser dropped the transaction cookie. Check that `COOKIE_DOMAIN` covers the API host |
+| "did not share an email address" | The client is missing the `email` scope or an email claim mapper |
+
 ## Signup restrictions
 
 Three variables together decide whether a new account can be created:

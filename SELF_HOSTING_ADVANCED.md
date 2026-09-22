@@ -67,6 +67,27 @@ STARTTLS is used automatically when advertised by the server. Port 465 (SMTPS / 
 
 Changes take effect after restarting the backend / compose stack. The web UI reads `GOOGLE_CLIENT_ID` from `/api/config` at runtime, so no web rebuild is needed.
 
+### OIDC Single Sign-On (Optional)
+
+Any provider with a discovery document works — Keycloak, Authentik, Okta, Auth0, Entra ID.
+
+| Variable | Description |
+|----------|-------------|
+| `OIDC_ISSUER` | Issuer URL serving `/.well-known/openid-configuration`. For Keycloak: `https://sso.example.com/realms/<realm>`. Empty keeps SSO off |
+| `OIDC_CLIENT_ID` | Client ID registered with the provider |
+| `OIDC_CLIENT_SECRET` | Client secret — required, the flow is confidential-client |
+| `OIDC_PROVIDER_NAME` | Label on the sign-in button (default `SSO`) |
+| `OIDC_SCOPES` | Comma- or space-separated; defaults to `openid email profile` |
+| `OIDC_REDIRECT_URI` | Overrides the callback derived from `MULTICA_PUBLIC_URL`, or `MULTICA_APP_URL` when that is unset |
+
+Register this exact callback on the provider's client — your Multica origin, or the API origin if you run the API on a separate host:
+
+```text
+https://multica.example.com/auth/oidc/callback
+```
+
+Accounts are matched by the `email` claim, and a sign-in is refused when the provider reports that address as unverified. Set `ALLOWED_EMAIL_DOMAINS` if your provider federates external identities. Changes take effect after restarting the backend; the web UI reads the rest from `/api/config` at runtime. See [Authentication Setup](https://docs.multica.ai/docs/auth-setup#single-sign-on-oidc) for the full walkthrough.
+
 ### Signup Controls (Optional)
 
 | Variable | Description |

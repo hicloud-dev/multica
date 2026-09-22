@@ -97,6 +97,72 @@ MULTICA_DEV_VERIFICATION_CODE=888888
 
 Google Console 与 `GOOGLE_REDIRECT_URI` 中的地址必须完全一致，包括协议、端口和结尾斜杠。配置生效后，登录页会出现 Google 登录按钮；前端镜像不需要重新构建。
 
+## 单点登录（OIDC）
+
+Multica 使用标准 OpenID Connect，因此任何发布 discovery 文档的身份提供商都可以接入：Keycloak、Authentik、Okta、Auth0、Entra ID。下面以 Keycloak 为例，其他提供商的变量完全相同。
+
+### 1. 在身份提供商处注册客户端
+
+在 Keycloak 中打开你的 realm 并创建客户端：
+
+- **Client type**：`OpenID Connect`
+- **Client authentication**：`On` —— Multica 是机密客户端，始终发送 client secret
+- **Valid redirect URIs**：填写下面这个地址，必须完全一致
+
+```text
+https://multica.example.com/auth/oidc/callback
+```
+
+<Callout type="warning">
+身份提供商会逐字节比对，因此协议、端口和结尾斜杠都必须一致。请使用你的 Multica 站点地址，也就是平时登录的那个域名。如果 API 部署在独立主机上，则改用 **API** 的地址——`/auth/oidc/callback` 由它提供。
+</Callout>
+
+在客户端的 **Credentials** 标签页复制生成的 client secret。
+
+### 2. 配置 Multica
+
+```dotenv
+OIDC_ISSUER=https://sso.example.com/realms/multica
+OIDC_CLIENT_ID=multica
+OIDC_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OIDC_PROVIDER_NAME=Keycloak
+```
+
+`OIDC_ISSUER` 是提供 `/.well-known/openid-configuration` 的基础 URL —— Keycloak 为 `<base>/realms/<realm>`。重启前先确认：
+
+```bash
+curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration | head
+```
+
+回调地址会自动推导：优先使用 `MULTICA_PUBLIC_URL`，未设置时使用 `MULTICA_APP_URL`（或 `FRONTEND_ORIGIN`）。只有当两者都无法描述身份提供商应跳转的地址时，才需要显式设置 `OIDC_REDIRECT_URI`。
+
+### 3. 重启 API
+
+登录页随即显示 **使用 Keycloak 登录** 按钮。所有配置都在运行时从 `/api/config` 读取，无需重新构建前端镜像。桌面应用会显示同样的按钮，并打开浏览器完成登录。
+
+### 账号如何匹配
+
+Multica 通过 `email` claim 识别用户：已有 Multica 账号的邮箱会登录到该账号，其他邮箱则在下文[注册范围控制](#注册范围控制)的约束下创建新账号。上线前有两点需要了解：
+
+- **身份提供商必须返回邮箱。** 请授予 `email` scope，并确认该 claim 已映射进 ID token 或 userinfo 响应。
+- **当身份提供商报告邮箱未验证（`email_verified: false`）时，登录会被拒绝。** 否则，任何能在你的 IdP 自助注册的人都可以通过邮箱匹配占用同事的账号。完全不返回该 claim 的提供商则会被接受。
+
+如果你的身份提供商会联合外部身份，请将 `ALLOWED_EMAIL_DOMAINS` 设为公司域名。
+
+### Scope
+
+默认请求 `openid email profile`。可通过 `OIDC_SCOPES` 追加（以逗号或空格分隔）；省略 `openid` 时会自动补上。
+
+### 排查
+
+| 现象 | 含义 |
+|---|---|
+| 没有 SSO 按钮 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` 中有一项未设置。API 启动日志会指出是哪一项 |
+| 提示"此实例未配置 SSO" | `MULTICA_APP_URL`、`MULTICA_PUBLIC_URL` 和 `OIDC_REDIRECT_URI` 均为空，无法推导出回调地址 |
+| 提示"身份提供商拒绝了此次请求" | client id、client secret 或回调地址与身份提供商处注册的不一致 |
+| 提示"本次登录已过期或已被使用" | 登录耗时超过 15 分钟，或浏览器丢弃了事务 cookie。请检查 `COOKIE_DOMAIN` 是否覆盖 API 主机 |
+| 提示"未提供邮箱地址" | 客户端缺少 `email` scope 或邮箱 claim mapper |
+
 ## 注册范围控制
 
 三个变量共同决定新账号能否创建：

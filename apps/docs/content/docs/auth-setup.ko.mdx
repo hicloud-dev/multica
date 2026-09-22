@@ -97,6 +97,72 @@ MULTICA_DEV_VERIFICATION_CODE=888888
 
 Google Console과 `GOOGLE_REDIRECT_URI`의 주소는 프로토콜, 포트, 마지막 슬래시까지 완전히 같아야 합니다. 설정이 적용되면 로그인 페이지에 Google 로그인 버튼이 표시됩니다. 프런트엔드 이미지를 다시 빌드할 필요는 없습니다.
 
+## 싱글 사인온(OIDC)
+
+Multica는 표준 OpenID Connect를 사용하므로 discovery 문서를 공개하는 ID 공급자라면 모두 연결할 수 있습니다(Keycloak, Authentik, Okta, Auth0, Entra ID). 아래는 Keycloak 예시이며, 변수는 어느 공급자에서나 동일합니다.
+
+### 1. ID 공급자에 클라이언트 등록
+
+Keycloak에서 realm을 열고 클라이언트를 만듭니다.
+
+- **Client type**: `OpenID Connect`
+- **Client authentication**: `On` — Multica는 confidential client이며 항상 client secret을 보냅니다
+- **Valid redirect URIs**: 아래 주소를 정확히 그대로 등록합니다
+
+```text
+https://multica.example.com/auth/oidc/callback
+```
+
+<Callout type="warning">
+공급자는 바이트 단위로 대조하므로 프로토콜, 포트, 마지막 슬래시까지 같아야 합니다. 평소 로그인하는 Multica origin을 쓰세요. API를 별도 호스트에서 운영한다면 `/auth/oidc/callback`을 제공하는 **API** origin을 사용합니다.
+</Callout>
+
+클라이언트의 **Credentials** 탭에서 생성된 client secret을 복사합니다.
+
+### 2. Multica 설정
+
+```dotenv
+OIDC_ISSUER=https://sso.example.com/realms/multica
+OIDC_CLIENT_ID=multica
+OIDC_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OIDC_PROVIDER_NAME=Keycloak
+```
+
+`OIDC_ISSUER`는 `/.well-known/openid-configuration`을 제공하는 기본 URL입니다. Keycloak에서는 `<base>/realms/<realm>`입니다. 재시작 전에 확인하세요.
+
+```bash
+curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration | head
+```
+
+callback URL은 자동으로 유도됩니다. `MULTICA_PUBLIC_URL`이 설정되어 있으면 그것을, 없으면 `MULTICA_APP_URL`(또는 `FRONTEND_ORIGIN`)을 사용합니다. 둘 다 공급자가 리디렉션할 origin을 나타내지 못할 때만 `OIDC_REDIRECT_URI`를 직접 지정하세요.
+
+### 3. API 재시작
+
+로그인 페이지에 **Keycloak(으)로 계속** 버튼이 표시됩니다. 설정은 런타임에 `/api/config`에서 읽으므로 프런트엔드 이미지를 다시 빌드할 필요가 없습니다. 데스크톱 앱에도 같은 버튼이 나타나며, 브라우저를 열어 로그인을 마칩니다.
+
+### 계정을 연결하는 방식
+
+Multica는 `email` claim으로 사용자를 식별합니다. 이미 Multica 계정이 있는 주소는 그 계정으로 로그인하고, 그 외에는 아래 [가입 범위 제어](#가입-범위-제어)의 제약을 받으며 새 계정이 만들어집니다. 도입 전에 알아 둘 점이 두 가지 있습니다.
+
+- **ID 공급자가 이메일을 보내야 합니다.** `email` scope를 부여하고, 해당 claim이 ID token 또는 userinfo 응답에 매핑되어 있는지 확인하세요.
+- **ID 공급자가 주소를 미확인(`email_verified: false`)으로 보고하면 로그인이 거부됩니다.** 그렇지 않으면 IdP에 스스로 등록할 수 있는 사람이 이메일 일치만으로 동료의 계정을 차지할 수 있기 때문입니다. claim 자체를 보내지 않는 공급자는 허용됩니다.
+
+ID 공급자가 외부 ID를 페더레이션한다면 `ALLOWED_EMAIL_DOMAINS`에 회사 도메인을 지정하세요.
+
+### Scope
+
+기본으로 `openid email profile`을 요청합니다. `OIDC_SCOPES`(쉼표 또는 공백 구분)로 추가할 수 있으며, `openid`는 생략해도 자동으로 추가됩니다.
+
+### 문제 해결
+
+| 증상 | 의미 |
+|---|---|
+| SSO 버튼이 없음 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` 중 하나가 비어 있습니다. 어느 것인지는 API 시작 로그에 남습니다 |
+| "SSO가 구성되어 있지 않습니다" | `MULTICA_APP_URL`, `MULTICA_PUBLIC_URL`, `OIDC_REDIRECT_URI`가 모두 비어 있어 callback URL을 유도할 수 없습니다 |
+| "ID 공급자가 이 요청을 거부했습니다" | client id, client secret, callback URL 중 하나가 공급자에 등록된 값과 다릅니다 |
+| "이번 로그인 시도가 만료되었거나 이미 사용되었습니다" | 로그인이 15분을 넘겼거나 브라우저가 트랜잭션 cookie를 버렸습니다. `COOKIE_DOMAIN`이 API 호스트를 포함하는지 확인하세요 |
+| "이메일 주소를 제공하지 않았습니다" | 클라이언트에 `email` scope 또는 이메일 claim mapper가 없습니다 |
+
 ## 가입 범위 제어
 
 세 변수가 새 계정을 만들 수 있는지 함께 결정합니다.

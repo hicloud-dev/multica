@@ -105,6 +105,18 @@ primary와 복제본의 연결 한도는 서로 독립적입니다. 모든 API �
 | `GOOGLE_CLIENT_SECRET` | 비어 있음 | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:3000/auth/callback` | Google Console의 callback 주소와 완전히 같아야 함 |
 
+### OIDC 싱글 사인온
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `OIDC_ISSUER` | 비어 있음 | `/.well-known/openid-configuration`을 제공하는 issuer URL. 비어 있으면 SSO 비활성 |
+| `OIDC_CLIENT_ID` | 비어 있음 | ID 공급자에 등록한 client ID |
+| `OIDC_CLIENT_SECRET` | 비어 있음 | client secret. 필수 — confidential client 흐름입니다 |
+| `OIDC_PROVIDER_NAME` | `SSO` | 로그인 버튼에 표시되는 이름 |
+| `OIDC_SCOPES` | `openid email profile` | 쉼표 또는 공백으로 구분. `openid`는 생략해도 자동 추가됨 |
+| `OIDC_REDIRECT_URI` | `MULTICA_PUBLIC_URL`, 없으면 `MULTICA_APP_URL`에서 유도 | ID 공급자에 등록하는 callback URL(`<origin>/auth/oidc/callback`) |
+| `RATE_LIMIT_AUTH_SSO` | `60` | IP당 1분에 허용되는 SSO 리디렉션 수 |
+
 ### 가입 범위
 
 | 변수 | 기본값 | 설명 |

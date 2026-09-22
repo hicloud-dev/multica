@@ -97,6 +97,72 @@ MULTICA_DEV_VERIFICATION_CODE=888888
 
 Google Console と `GOOGLE_REDIRECT_URI` のアドレスは、プロトコル、ポート、末尾のスラッシュを含めて完全に一致している必要があります。設定が反映されると、ログインページに Google ログインボタンが表示されます。フロントエンドイメージの再ビルドは不要です。
 
+## シングルサインオン（OIDC）
+
+Multica は標準の OpenID Connect を使うため、discovery ドキュメントを公開している ID プロバイダーであれば接続できます（Keycloak、Authentik、Okta、Auth0、Entra ID など）。以下は Keycloak を例にしていますが、変数はどのプロバイダーでも同じです。
+
+### 1. ID プロバイダーでクライアントを登録する
+
+Keycloak で realm を開き、クライアントを作成します。
+
+- **Client type**：`OpenID Connect`
+- **Client authentication**：`On` — Multica はコンフィデンシャルクライアントで、常に client secret を送信します
+- **Valid redirect URIs**：下記のアドレスを完全に一致させて登録します
+
+```text
+https://multica.example.com/auth/oidc/callback
+```
+
+<Callout type="warning">
+プロバイダーはバイト単位で照合するため、プロトコル・ポート・末尾のスラッシュまで一致させてください。普段サインインしている Multica のオリジンを指定します。API を別ホストで動かしている場合は、`/auth/oidc/callback` を提供する **API** のオリジンを使ってください。
+</Callout>
+
+クライアントの **Credentials** タブで生成された client secret をコピーします。
+
+### 2. Multica を設定する
+
+```dotenv
+OIDC_ISSUER=https://sso.example.com/realms/multica
+OIDC_CLIENT_ID=multica
+OIDC_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OIDC_PROVIDER_NAME=Keycloak
+```
+
+`OIDC_ISSUER` は `/.well-known/openid-configuration` を提供するベース URL です（Keycloak では `<base>/realms/<realm>`）。再起動前に確認します。
+
+```bash
+curl -s https://sso.example.com/realms/multica/.well-known/openid-configuration | head
+```
+
+コールバック URL は自動的に導出されます。`MULTICA_PUBLIC_URL` が設定されていればそれを、なければ `MULTICA_APP_URL`（または `FRONTEND_ORIGIN`）を使います。どちらもプロバイダーのリダイレクト先を表していない場合にのみ、`OIDC_REDIRECT_URI` を明示してください。
+
+### 3. API を再起動する
+
+サインインページに **Keycloak で続ける** ボタンが表示されます。設定は実行時に `/api/config` から読み込まれるため、フロントエンドイメージの再ビルドは不要です。デスクトップアプリにも同じボタンが表示され、ブラウザーを開いてログインを完了します。
+
+### アカウントの紐付け方
+
+Multica は `email` クレームでユーザーを識別します。既に Multica アカウントがあるアドレスはそのアカウントにサインインし、それ以外は下記の[サインアップ制限](#サインアップ制限)の範囲で新規作成されます。導入前に押さえておきたい点が 2 つあります。
+
+- **ID プロバイダーがメールアドレスを返す必要があります。** `email` scope を付与し、クレームが ID token か userinfo レスポンスにマッピングされていることを確認してください。
+- **ID プロバイダーがアドレスを未確認（`email_verified: false`）と報告した場合、サインインは拒否されます。** そうしないと、IdP で自由に登録できる人物がメールアドレスの一致だけで同僚のアカウントを乗っ取れてしまうためです。クレーム自体を返さないプロバイダーは受け入れられます。
+
+ID プロバイダーが外部 ID をフェデレーションしている場合は、`ALLOWED_EMAIL_DOMAINS` に自社ドメインを設定してください。
+
+### スコープ
+
+既定では `openid email profile` を要求します。`OIDC_SCOPES`（カンマまたはスペース区切り）で追加でき、`openid` は省略しても自動で追加されます。
+
+### トラブルシューティング
+
+| 症状 | 意味 |
+|---|---|
+| SSO ボタンが出ない | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` のいずれかが未設定です。どれかは API の起動ログに出ます |
+| 「SSO が設定されていません」 | `MULTICA_APP_URL`・`MULTICA_PUBLIC_URL`・`OIDC_REDIRECT_URI` がすべて空で、コールバック URL を導出できません |
+| 「ID プロバイダーがこのリクエストを拒否しました」 | client id、client secret、コールバック URL のいずれかがプロバイダーの登録内容と一致していません |
+| 「今回のログインは期限切れか、すでに使用済みです」 | ログインに 15 分以上かかったか、ブラウザーがトランザクション cookie を破棄しました。`COOKIE_DOMAIN` が API ホストを含むか確認してください |
+| 「メールアドレスが提供されませんでした」 | クライアントに `email` scope かメールクレームの mapper がありません |
+
 ## サインアップ制限
 
 3 つの変数が組み合わさって、新しいアカウントを作成できるかどうかを決めます:

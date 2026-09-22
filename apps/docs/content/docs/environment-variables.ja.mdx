@@ -105,6 +105,18 @@ primary とレプリカの接続上限は独立しています。全 API プロ�
 | `GOOGLE_CLIENT_SECRET` | 空 | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:3000/auth/callback` | Google Console のコールバックアドレスと完全に一致している必要があります |
 
+### OIDC シングルサインオン
+
+| 変数 | デフォルト | 説明 |
+|---|---|---|
+| `OIDC_ISSUER` | 空 | `/.well-known/openid-configuration` を提供する issuer URL。空の場合 SSO は無効 |
+| `OIDC_CLIENT_ID` | 空 | ID プロバイダーに登録した client ID |
+| `OIDC_CLIENT_SECRET` | 空 | client secret。必須（コンフィデンシャルクライアントのフローです） |
+| `OIDC_PROVIDER_NAME` | `SSO` | サインインボタンに表示される名称 |
+| `OIDC_SCOPES` | `openid email profile` | カンマまたはスペース区切り。`openid` は省略しても自動で追加されます |
+| `OIDC_REDIRECT_URI` | `MULTICA_PUBLIC_URL`、なければ `MULTICA_APP_URL` から導出 | ID プロバイダーに登録するコールバック URL（`<origin>/auth/oidc/callback`） |
+| `RATE_LIMIT_AUTH_SSO` | `60` | IP ごとに 1 分あたり許可される SSO リダイレクト数 |
+
 ### サインアップ範囲
 
 | 変数 | デフォルト | 説明 |

@@ -105,6 +105,18 @@ SMTP takes priority over Resend whenever `SMTP_HOST` is non-empty.
 | `GOOGLE_CLIENT_SECRET` | empty | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:3000/auth/callback` | Must exactly match the callback URL in the Google Console |
 
+### OIDC single sign-on
+
+| Variable | Default | Description |
+|---|---|---|
+| `OIDC_ISSUER` | empty | Issuer URL serving `/.well-known/openid-configuration`. Empty keeps SSO off |
+| `OIDC_CLIENT_ID` | empty | Client ID registered with the provider |
+| `OIDC_CLIENT_SECRET` | empty | Client secret. Required — the flow is confidential-client |
+| `OIDC_PROVIDER_NAME` | `SSO` | Label on the sign-in button |
+| `OIDC_SCOPES` | `openid email profile` | Comma- or space-separated; `openid` is added if omitted |
+| `OIDC_REDIRECT_URI` | derived from `MULTICA_PUBLIC_URL`, else `MULTICA_APP_URL` | Callback URL registered with the provider, i.e. `<origin>/auth/oidc/callback` |
+| `RATE_LIMIT_AUTH_SSO` | `60` | SSO redirects allowed per IP per minute |
+
 ### Signup scope
 
 | Variable | Default | Description |

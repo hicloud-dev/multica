@@ -105,6 +105,18 @@ MULTICA_PUBLIC_URL=https://api.multica.example.com
 | `GOOGLE_CLIENT_SECRET` | 空 | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:3000/auth/callback` | 必须与 Google Console 中的回调地址完全一致 |
 
+### OIDC 单点登录
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `OIDC_ISSUER` | 空 | 提供 `/.well-known/openid-configuration` 的 issuer URL。留空则关闭 SSO |
+| `OIDC_CLIENT_ID` | 空 | 在身份提供商处注册的 client ID |
+| `OIDC_CLIENT_SECRET` | 空 | client secret。必填——此流程为机密客户端 |
+| `OIDC_PROVIDER_NAME` | `SSO` | 登录按钮上的名称 |
+| `OIDC_SCOPES` | `openid email profile` | 以逗号或空格分隔；省略 `openid` 时会自动补上 |
+| `OIDC_REDIRECT_URI` | 由 `MULTICA_PUBLIC_URL` 推导，未设置时用 `MULTICA_APP_URL` | 在身份提供商处注册的回调地址，即 `<origin>/auth/oidc/callback` |
+| `RATE_LIMIT_AUTH_SSO` | `60` | 每个 IP 每分钟允许的 SSO 跳转次数 |
+
 ### 注册范围
 
 | 变量 | 默认值 | 说明 |
