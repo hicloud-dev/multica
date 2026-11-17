@@ -12,7 +12,6 @@ import {
   XCircle,
   X,
   Loader2,
-  Clock,
   Copy,
   Check,
   ChevronRight,
@@ -28,10 +27,11 @@ import {
   Info,
   Coins,
   GitBranch,
-} from "lucide-react";
+} from "@multica/ui/icons";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { Button } from "@multica/ui/components/ui/button";
+import { IconButton } from "@multica/ui/components/common/icon-button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import {
@@ -44,6 +44,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
 import { AttributionBadge } from "../../issues/components/attribution-badge";
+import { plainTriggerSummary, useFormatSpend } from "../../issues/components/task-run-labels";
 import { cancellationActorLabel, cancelReasonLabel, failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { RichContent } from "../../rich-content";
 import { api } from "@multica/core/api";
@@ -79,6 +80,7 @@ import {
 } from "./build-steps";
 import { buildRunOutcome } from "./run-outcome";
 import { RunTimeline } from "./run-timeline";
+import { ContextReceiptButton } from "./context-receipt";
 import {
   base64ByteLength,
   readImageResult,
@@ -90,6 +92,7 @@ import {
 } from "./trace-event-presenter";
 import type { TraceSummaryLabels } from "./trace-event-presenter";
 import {
+  CommandDetailSurface,
   DiffDetailSurface,
   FileWriteSurface,
   PatchDetailSurface,
@@ -99,11 +102,13 @@ import { languageForPath } from "./diff-highlight";
 import { useLocale, useT } from "../../i18n";
 import {
   formatTokens,
-  formatUsd,
+  hasTokenFigure,
   summarizeTaskUsage,
 } from "../../runtimes/utils";
+import { formatBytes } from "../format-bytes";
 import "../../editor/styles/code.css";
 import "./task-transcript.css";
+import { TooltipHint } from "@multica/ui/components/common/tooltip-hint";
 
 // The run surface, read in four layers: what happened (header), what it
 // produced (outcome), where the time went (timeline), and the evidence (steps).
@@ -242,22 +247,23 @@ function RunDetailRow({
   const valueClass = cn("min-w-0 select-text break-all text-foreground", mono && "font-mono");
   if (onCopy) {
     return (
-      <button
-        type="button"
-        onClick={onCopy}
-        title={copyTitle}
-        className="group -mx-1 grid w-[calc(100%+0.5rem)] grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-3 rounded-xs px-1 py-0.5 text-left transition-colors hover:bg-accent/60"
-      >
-        <span className="text-muted-foreground">{label}</span>
-        <span className="flex min-w-0 items-start gap-1.5">
-          <span className={cn(valueClass, "flex-1")}>{value}</span>
-          {copied ? (
-            <Check className="mt-0.5 h-3 w-3 shrink-0 text-success" />
-          ) : (
-            <Copy className="mt-0.5 h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
-          )}
-        </span>
-      </button>
+      <TooltipHint label={copyTitle}>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="group -mx-1 grid w-[calc(100%+0.5rem)] grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-3 rounded-xs px-1 py-0.5 text-left transition-colors hover:bg-accent/60"
+        >
+          <span className="text-muted-foreground">{label}</span>
+          <span className="flex min-w-0 items-start gap-1.5">
+            <span className={cn(valueClass, "flex-1")}>{value}</span>
+            {copied ? (
+              <Check className="mt-0.5 h-3 w-3 shrink-0 text-success" />
+            ) : (
+              <Copy className="mt-0.5 h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+            )}
+          </span>
+        </button>
+      </TooltipHint>
     );
   }
   return (
@@ -322,6 +328,7 @@ export function AgentTranscriptDialog({
   contentState,
 }: AgentTranscriptDialogProps) {
   const { t } = useT("agents");
+  const formatSpend = useFormatSpend();
   const locale = useLocale();
   const formatText = useTraceIssueLabels(useWorkspaceId(), task.issue_id, items, open);
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
@@ -554,11 +561,6 @@ export function AgentTranscriptDialog({
     selectedStep && runStartMs !== undefined
       ? Math.max(0, (timeMs(selectedStep.startedAt) ?? runStartMs) - runStartMs)
       : undefined;
-
-  // Keyed on the run having produced nothing at all, not on the filtered view
-  // being empty — a filter that hides every step is not a runtime limitation.
-  const isAntigravityLiveEmpty =
-    isLive && steps.length === 0 && runtimeInfo?.provider === "antigravity";
 
   // Newest-first shows live events as PREPENDS, and Virtuoso items opt out of
   // native scroll anchoring (`overflow-anchor: none`), so without compensation
@@ -813,7 +815,9 @@ export function AgentTranscriptDialog({
   // up front than the runtime/provider diagnostics, which live in the ⓘ popover.
   const triggerLabel = task.parent_task_id
     ? t(($) => $.transcript.trigger_retry)
-    : task.kind === "comment" || task.trigger_comment_id
+    : task.wakeup_id
+      ? t(($) => $.transcript.trigger_wakeup)
+      : task.kind === "comment" || task.trigger_comment_id
       ? t(($) => $.transcript.trigger_comment)
       : task.kind === "autopilot" || task.autopilot_run_id
         ? t(($) => $.transcript.trigger_autopilot)
@@ -867,7 +871,7 @@ export function AgentTranscriptDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="!max-w-5xl !w-[calc(100vw-4rem)] !max-h-[calc(100vh-4rem)] !h-[calc(100vh-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
+        className="!max-w-5xl !w-[calc(100%-4rem)] !max-h-[calc(100%-4rem)] !h-[calc(100%-4rem)] flex flex-col !p-0 !gap-0 overflow-hidden"
         showCloseButton={false}
         finalFocus={finalFocus}
       >
@@ -931,22 +935,29 @@ export function AgentTranscriptDialog({
                 title={t(($) => $.transcript.usage_chip_title)}
               >
                 <Coins aria-hidden="true" className="h-3 w-3 text-muted-foreground" />
-                <span className="font-medium">{formatTokens(usage.tokens)}</span>
-                <span className="text-faint-foreground">·</span>
-                <span className="text-muted-foreground">{formatUsd(usage.cost)}</span>
+                {hasTokenFigure(usage) && (
+                  <>
+                    <span className="font-medium">{formatTokens(usage.tokens)}</span>
+                    <span className="text-faint-foreground">·</span>
+                  </>
+                )}
+                <span className="text-muted-foreground">{formatSpend(usage)}</span>
               </span>
             )}
 
             <div className="flex shrink-0 items-center gap-0.5">
+              {/* What the agent was handed (MUL-9013). Renders nothing for
+                  runs whose daemon predates the receipt. */}
+              <ContextReceiptButton taskId={task.id} open={open} />
               {hasRunDetails && (
                 <Popover>
                   <PopoverTrigger
                     render={
-                      <Button
+                      <IconButton
                         variant="ghost"
                         size="icon-sm"
-                        aria-label={t(($) => $.transcript.run_info)}
-                        title={t(($) => $.transcript.run_info)}
+                        label={t(($) => $.transcript.run_info)}
+                        tooltipSide="bottom"
                         className="text-muted-foreground"
                       />
                     }
@@ -1066,7 +1077,7 @@ export function AgentTranscriptDialog({
                           )}
                           <RunDetailRow
                             label={t(($) => $.transcript.details_cost)}
-                            value={formatUsd(usage.cost)}
+                            value={formatSpend(usage)}
                           />
                         </>
                       )}
@@ -1074,18 +1085,22 @@ export function AgentTranscriptDialog({
                   </PopoverContent>
                 </Popover>
               )}
-              <Button
+              <IconButton
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => onOpenChange(false)}
-                aria-label={t(($) => $.transcript.close)}
+                label={t(($) => $.transcript.close)}
+                tooltipSide="bottom"
                 className="text-muted-foreground"
               >
                 <X className="h-4 w-4" />
-              </Button>
+              </IconButton>
             </div>
           </div>
         </div>
+
+        {/* ── What was asked ─────────────────────────────────────────── */}
+        <RunTriggerRow task={task} />
 
         {/* ── What the run produced ──────────────────────────────────── */}
         <RunOutcomeRow outcome={outcome} branch={task.branch_name} />
@@ -1180,10 +1195,10 @@ export function AgentTranscriptDialog({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button
+                <IconButton
                   variant="ghost"
                   size="icon-sm"
-                  aria-label={t(($) => $.transcript.more_actions)}
+                  label={t(($) => $.transcript.more_actions)}
                   className="text-muted-foreground"
                 />
               }
@@ -1220,12 +1235,7 @@ export function AgentTranscriptDialog({
           <div className="flex min-w-0 flex-1 flex-col">
             {contentState ? <div className="flex h-full items-center justify-center p-4">{contentState}</div> : displayRows.length === 0 ? (
               <div className="flex h-full items-center justify-center text-body text-muted-foreground">
-                {isAntigravityLiveEmpty ? (
-                  <div className="flex max-w-md items-center gap-2 px-4 text-center">
-                    <Clock className="h-4 w-4 shrink-0" />
-                    {t(($) => $.transcript.antigravity_live_unavailable)}
-                  </div>
-                ) : isLive && steps.length === 0 ? (
+                {isLive && steps.length === 0 ? (
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     {t(($) => $.transcript.waiting_events)}
@@ -1326,6 +1336,32 @@ function FactDot() {
  * Renders nothing when the run produced nothing nameable; a row of zeroes
  * would read as "it did nothing" rather than "we have nothing to summarize".
  */
+/**
+ * What the person asked for, in full. The header names only how the run was
+ * triggered ("Comment"), and the lists that open this dialog show the ask on
+ * one truncated line — so this is where a long request is read whole. The
+ * snapshot itself is capped at ~200 runes by the server; it is shown as it
+ * was captured, wrapping rather than truncating.
+ */
+function RunTriggerRow({ task }: { task: AgentTask }) {
+  const { t } = useT("agents");
+  const { t: tIssues } = useT("issues");
+  if (!task.trigger_summary) return null;
+  const text = plainTriggerSummary(
+    task.trigger_summary,
+    tIssues(($) => $.execution_log.trigger_image),
+  );
+  if (!text) return null;
+  return (
+    <div className="flex shrink-0 items-baseline gap-2 border-b px-4 py-2">
+      <span className="shrink-0 text-micro text-muted-foreground">
+        {t(($) => $.transcript.trigger_text)}
+      </span>
+      <p className="min-w-0 whitespace-pre-wrap break-words text-caption text-foreground">{text}</p>
+    </div>
+  );
+}
+
 function RunOutcomeRow({
   outcome,
   branch,
@@ -1712,10 +1748,15 @@ function StepInspector({
       ? call.tool || t(($) => $.transcript.kind_tool)
       : step.kind === "thinking"
         ? t(($) => $.transcript.kind_thinking)
-        : t(($) => $.transcript.kind_error);
+        : step.kind === "text"
+          ? t(($) => $.transcript.kind_text)
+          : t(($) => $.transcript.kind_error);
 
   return (
-    <aside className="flex w-[26rem] shrink-0 flex-col border-l bg-muted/25">
+    // Full width below md: on a phone the dialog is narrower than this pane, and
+    // a fixed 26rem pushed the header's close button past the clipped edge —
+    // the reader had no way back to the step list.
+    <aside className="flex w-full shrink-0 flex-col border-l-0 bg-muted/25 md:w-[26rem] md:border-l">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <StepIcon step={step} className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-label font-semibold">{title}</span>
@@ -1732,25 +1773,26 @@ function StepInspector({
             </>
           )}
         </span>
-        <Button
+        <IconButton
           variant="ghost"
           size="icon-sm"
           onClick={handleCopy}
-          aria-label={t(($) => $.transcript.copy_step)}
-          title={t(($) => $.transcript.copy_step)}
+          label={t(($) => $.transcript.copy_step)}
+          tooltipSide="bottom"
           className="shrink-0 text-muted-foreground"
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        </Button>
-        <Button
+        </IconButton>
+        <IconButton
           variant="ghost"
           size="icon-sm"
           onClick={onClose}
-          aria-label={t(($) => $.transcript.close_step)}
+          label={t(($) => $.transcript.close_step)}
+          tooltipSide="bottom"
           className="shrink-0 text-muted-foreground"
         >
           <X className="h-3.5 w-3.5" />
-        </Button>
+        </IconButton>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {call ? (
@@ -1817,6 +1859,12 @@ export function StepBody({ item }: { item: TimelineItem }) {
     );
   }
 
+  // Tool input has no server-side budget, so it is clipped for display.
+  const clipForDisplay = (text: string) =>
+    text.length > DISPLAY_CLIP_CHARS
+      ? `${redactSecrets(text.slice(0, DISPLAY_CLIP_CHARS))}\n${t(($) => $.transcript.display_clipped)}`
+      : redactSecrets(text);
+
   switch (detail.kind) {
     case "diff":
       return <DiffDetailSurface lines={detail.lines} path={detail.path} />;
@@ -1824,18 +1872,19 @@ export function StepBody({ item }: { item: TimelineItem }) {
       return <PatchDetailSurface files={detail.files} truncated={detail.truncated} />;
     case "file":
       return <FileWriteSurface text={detail.text} lineCount={detail.lineCount} path={detail.path} />;
+    case "command":
+      return (
+        <CommandDetailSurface
+          command={clipForDisplay(detail.command)}
+          params={detail.params && clipForDisplay(detail.params)}
+        />
+      );
     default: {
-      const text = detail.text;
       // A stored tool result is already capped at 8192 bytes by the daemon, so
       // clipping it again could only shave a couple of hundred more characters
-      // — under a note that already reports the same loss. Tool input has no
-      // server-side budget and keeps the clip at its existing length; nothing
-      // about how long an input renders is this change's business.
-      const clip = item.type === "tool_result" ? null : DISPLAY_CLIP_CHARS;
+      // — under a note that already reports the same loss.
       const clipped =
-        clip !== null && text.length > clip
-          ? `${redactSecrets(text.slice(0, clip))}\n${t(($) => $.transcript.display_clipped)}`
-          : redactSecrets(text);
+        item.type === "tool_result" ? redactSecrets(detail.text) : clipForDisplay(detail.text);
       const path = item.type === "tool_use" ? readPathFromInput(item.input) : undefined;
       return (
         <ToolDetailSurface
@@ -1854,8 +1903,3 @@ function readPathFromInput(input: Record<string, unknown> | undefined): string |
   return typeof path === "string" ? path : undefined;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

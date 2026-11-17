@@ -23,12 +23,10 @@ import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import type { User } from "@multica/core/types";
-import { KeyRound } from "lucide-react";
+import { KeyRound } from "@multica/ui/icons";
 import { useT } from "../i18n";
 
-// ---------------------------------------------------------------------------
 // Types
-// ---------------------------------------------------------------------------
 
 interface GoogleAuthConfig {
   clientId: string;
@@ -90,9 +88,7 @@ interface LoginPageProps {
   extra?: ReactNode;
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Shown when the operator has not named their identity provider. "SSO" is what
@@ -102,6 +98,7 @@ const DEFAULT_SSO_PROVIDER_NAME = "SSO";
 
 export function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
+  // eslint-disable-next-line no-restricted-syntax -- CLI login runs in the web app only; the token must reach the CLI's local listener in this tab
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
 }
 
@@ -126,9 +123,7 @@ export function validateCliCallback(cliCallback: string): boolean {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Component
-// ---------------------------------------------------------------------------
 
 export function LoginPage({
   logo,
@@ -329,6 +324,7 @@ export function LoginPage({
       prompt: "select_account",
     });
     if (google.state) params.set("state", google.state);
+    // eslint-disable-next-line no-restricted-syntax -- web OAuth redirect; Desktop passes onGoogleLogin and returns above
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   };
 
@@ -340,12 +336,11 @@ export function LoginPage({
     if (!sso?.startUrl) return;
     // A full navigation, not a fetch: the server answers with a redirect to
     // the identity provider and sets the login transaction cookie on the way.
+    // eslint-disable-next-line no-restricted-syntax -- web SSO redirect; Desktop passes onSsoLogin and returns above
     window.location.href = sso.startUrl;
   };
 
-  // -------------------------------------------------------------------------
   // CLI confirm step
-  // -------------------------------------------------------------------------
 
   if (step === "cli_confirm" && existingUser) {
     return (
@@ -387,9 +382,7 @@ export function LoginPage({
     );
   }
 
-  // -------------------------------------------------------------------------
   // Code verification step
-  // -------------------------------------------------------------------------
 
   if (step === "code") {
     return (
@@ -459,9 +452,7 @@ export function LoginPage({
     );
   }
 
-  // -------------------------------------------------------------------------
   // Email step
-  // -------------------------------------------------------------------------
 
   return (
     <div className="flex min-h-svh items-center justify-center">

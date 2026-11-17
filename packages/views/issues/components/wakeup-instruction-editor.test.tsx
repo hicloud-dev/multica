@@ -6,6 +6,12 @@ import type { IssueWakeup } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { WakeupInstructionEditor } from "./wakeup-instruction-editor";
 
+vi.mock("./wakeup-condition-names", () => ({
+  useConditionNames: () => ({ status: (key: string) => key, label: () => undefined, property: () => undefined, actor: (_type: string, id: string) => id }),
+}));
+vi.mock("../../common/use-viewing-timezone", () => ({
+  useViewingTimezone: () => "UTC",
+}));
 vi.mock("@multica/core/api", () => ({ api: { listIssueWakeups: vi.fn(), editIssueWakeupInstruction: vi.fn() } }));
 const list = vi.mocked(api.listIssueWakeups);
 const edit = vi.mocked(api.editIssueWakeupInstruction);

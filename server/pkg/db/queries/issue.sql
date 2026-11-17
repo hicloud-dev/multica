@@ -6,9 +6,9 @@
 -- because that is already the meaning of the `assignee_id` filter (tab 1
 -- "Assigned to me"), and the two filters must produce disjoint result sets.
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.requester_user_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.duplicate_of_issue_id
 FROM issue i
 WHERE i.workspace_id = $1
   AND (sqlc.narg('status')::text IS NULL OR i.status = sqlc.narg('status'))
@@ -16,7 +16,10 @@ WHERE i.workspace_id = $1
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
   AND (sqlc.narg('assignee_ids')::uuid[] IS NULL OR i.assignee_id = ANY(sqlc.narg('assignee_ids')::uuid[]))
   AND (sqlc.narg('creator_id')::uuid IS NULL OR i.creator_id = sqlc.narg('creator_id'))
+  AND (sqlc.narg('created_by_user_id')::uuid IS NULL OR (i.creator_type = 'member' AND i.creator_id = sqlc.narg('created_by_user_id')) OR i.requester_user_id = sqlc.narg('created_by_user_id'))
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+  -- MUL-8472: private projects the caller cannot see.
+  AND (sqlc.narg('hidden_project_ids')::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY(sqlc.narg('hidden_project_ids')::uuid[])))
   AND (sqlc.narg('scheduled')::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
   AND (sqlc.narg('metadata_filter')::jsonb IS NULL OR i.metadata @> sqlc.narg('metadata_filter')::jsonb)
   AND (
@@ -182,10 +185,10 @@ INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    stage, last_activity_at, id
+    stage, properties, last_activity_at, id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('stage'), COALESCE(sqlc.narg('properties')::jsonb, '{}'::jsonb), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
 ) RETURNING *;
 
 -- name: GetIssueByNumber :one
@@ -193,7 +196,14 @@ SELECT * FROM issue
 WHERE workspace_id = $1 AND number = $2;
 
 -- name: UpdateIssue :one
-WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', COALESCE(sqlc.narg('source_task_id')::uuid::text, ''), true)), candidate AS (
+WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', COALESCE(sqlc.narg('source_task_id')::uuid::text, ''), true)), candidate AS MATERIALIZED (
+    -- FOR UPDATE, so every next_* value below is computed from the row this
+    -- statement is about to write rather than from the snapshot the statement
+    -- started with. Without it a write that waits here behind a concurrent one
+    -- resumes with stale values and writes them back: an ordinary priority edit
+    -- could restore a duplicate mark another transaction had just cleared, and
+    -- did_change/did_activity would be decided against the pre-wait row too.
+    -- Materialized so the locking clause is never inlined away.
     SELECT
         i.*,
         COALESCE(sqlc.narg('title')::text, i.title) AS next_title,
@@ -234,28 +244,45 @@ WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', 
         sqlc.narg('due_date')::date AS next_due_date,
         sqlc.narg('parent_issue_id')::uuid AS next_parent_issue_id,
         sqlc.narg('project_id')::uuid AS next_project_id,
-        sqlc.narg('stage')::integer AS next_stage
+        sqlc.narg('stage')::integer AS next_stage,
+        -- A supplied pointer marks the issue (the handler also sets cancelled).
+        -- Otherwise a mark only survives a write that leaves an already
+        -- cancelled issue cancelled. Every other write drops it: reopening is
+        -- how a mark is removed, and re-entering cancelled does not revive a
+        -- pointer that a server predating this rule left on a reopened issue.
+        CASE
+            WHEN sqlc.narg('duplicate_of_issue_id')::uuid IS NOT NULL
+                THEN sqlc.narg('duplicate_of_issue_id')::uuid
+            WHEN i.status = 'cancelled' AND COALESCE(sqlc.narg('status')::text, i.status) = 'cancelled'
+                THEN i.duplicate_of_issue_id
+            ELSE NULL
+        END AS next_duplicate_of_issue_id
     FROM issue AS i
     WHERE i.id = $1
       AND (sqlc.narg('expected_revision')::bigint IS NULL OR i.revision = sqlc.narg('expected_revision')::bigint)
+    FOR UPDATE
 ), changed AS (
     SELECT
         candidate.*,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
-            position, start_date, due_date, parent_issue_id, project_id, stage
+            position, start_date, due_date, parent_issue_id, project_id, stage,
+            duplicate_of_issue_id
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
             next_assignee_type, next_assignee_id, next_position, next_start_date,
-            next_due_date, next_parent_issue_id, next_project_id, next_stage
+            next_due_date, next_parent_issue_id, next_project_id, next_stage,
+            next_duplicate_of_issue_id
         ) AS did_change,
         ROW(
             title, description, status, priority, assignee_type, assignee_id,
-            start_date, due_date, parent_issue_id, project_id, stage
+            start_date, due_date, parent_issue_id, project_id, stage,
+            duplicate_of_issue_id
         ) IS DISTINCT FROM ROW(
             next_title, next_description, next_status, next_priority,
             next_assignee_type, next_assignee_id, next_start_date, next_due_date,
-            next_parent_issue_id, next_project_id, next_stage
+            next_parent_issue_id, next_project_id, next_stage,
+            next_duplicate_of_issue_id
         ) AS did_activity
     FROM candidate
 )
@@ -272,6 +299,7 @@ UPDATE issue AS i SET
     parent_issue_id = changed.next_parent_issue_id,
     project_id = changed.next_project_id,
     stage = changed.next_stage,
+    duplicate_of_issue_id = changed.next_duplicate_of_issue_id,
     revision = i.revision + changed.did_change::integer,
     last_activity_at = CASE WHEN changed.did_activity
         THEN GREATEST(COALESCE(i.last_activity_at, i.updated_at), now())
@@ -296,6 +324,10 @@ RETURNING i.*;
 WITH wakeup_source AS MATERIALIZED (SELECT set_config('multica.source_task_id', COALESCE(sqlc.narg('source_task_id')::uuid::text, ''), true))
 UPDATE issue AS i SET
     status = $2,
+    -- Same rule as UpdateIssue: a mark only survives cancelled -> cancelled.
+    -- Background writers (GitHub, task recovery) go through here, so they
+    -- cannot leave a pointer on a reopened issue.
+    duplicate_of_issue_id = CASE WHEN $2 = 'cancelled' AND i.status = 'cancelled' THEN i.duplicate_of_issue_id ELSE NULL END,
     position = CASE WHEN i.status IS DISTINCT FROM $2 THEN (
         SELECT COALESCE(MIN(target.position), 0) - 1
         FROM issue AS target
@@ -312,15 +344,79 @@ FROM wakeup_source
 WHERE i.id = $1 AND i.workspace_id = $3
 RETURNING i.*;
 
+-- name: LockIssuesForDuplicateMark :many
+-- Locks the issue being marked and its target, in id order, before the mark is
+-- validated. Two marks that share an issue (A -> B racing B -> A, or C -> A
+-- racing A -> B) then run one after the other, so the second one validates
+-- against what the first wrote. A target outside the workspace is not returned.
+-- is_duplicate applies the same validity rule as the reads below.
+SELECT i.id,
+       (i.status = 'cancelled' AND EXISTS (
+           SELECT 1 FROM issue AS original
+           WHERE original.id = i.duplicate_of_issue_id
+             AND original.workspace_id = i.workspace_id
+       ))::boolean AS is_duplicate
+FROM issue AS i
+WHERE i.workspace_id = sqlc.arg('workspace_id')
+  AND i.id = ANY(sqlc.arg('issue_ids')::uuid[])
+ORDER BY i.id
+FOR UPDATE OF i;
+
+-- A mark only counts while the duplicate is cancelled and its original still
+-- exists. Writes keep that true, but a server predating this feature (after a
+-- rollback that kept the column) can reopen a duplicate or delete an original
+-- without touching the pointer, so every read applies the rule itself.
+
+-- name: IssueHasDuplicates :one
+SELECT EXISTS (
+    SELECT 1 FROM issue
+    WHERE workspace_id = sqlc.arg('workspace_id')
+      AND duplicate_of_issue_id = sqlc.arg('issue_id')::uuid
+      AND status = 'cancelled'
+) AS has_duplicates;
+
+-- name: ListIssueDuplicates :many
+SELECT * FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND duplicate_of_issue_id = sqlc.arg('issue_id')::uuid
+  AND status = 'cancelled'
+ORDER BY created_at ASC, id ASC;
+
+-- name: GetIssueRefInWorkspace :one
+-- The summary a duplicate's response carries for its original (MUL-7349).
+SELECT id, number, title, status FROM issue
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: ListIssueRefsInWorkspace :many
+-- GetIssueRefInWorkspace for a page: every original the page's duplicates
+-- point at, in one read.
+SELECT id, number, title, status, project_id FROM issue
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND id = ANY(sqlc.arg('ids')::uuid[]);
+
+-- name: ClearIssueDuplicatesOf :many
+-- Deleting an issue clears the pointers of its duplicates, the way deleting a
+-- parent detaches its children. They stay cancelled. Issues deleted in the
+-- same batch are skipped.
+UPDATE issue
+SET duplicate_of_issue_id = NULL,
+    revision = revision + 1,
+    updated_at = now(),
+    last_activity_at = GREATEST(COALESCE(last_activity_at, updated_at), now())
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND duplicate_of_issue_id = sqlc.arg(issue_id)::uuid
+  AND NOT COALESCE(id = ANY(sqlc.arg(excluded_issue_ids)::uuid[]), false)
+RETURNING *;
+
 -- name: CreateIssueWithOrigin :one
 INSERT INTO issue (
     workspace_id, title, description, status, priority,
     assignee_type, assignee_id, creator_type, creator_id,
     parent_issue_id, position, start_date, due_date, number, project_id,
-    origin_type, origin_id, stage, last_activity_at, id
+    origin_type, origin_id, stage, properties, last_activity_at, id, requester_user_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid())
+    sqlc.narg('origin_type'), sqlc.narg('origin_id'), sqlc.narg('stage'), COALESCE(sqlc.narg('properties')::jsonb, '{}'::jsonb), now(), COALESCE(sqlc.narg('id')::uuid, gen_random_uuid()), sqlc.narg('requester_user_id')
 ) RETURNING *;
 
 -- name: LockIssueDuplicateKey :exec
@@ -391,8 +487,40 @@ cleared_wakeup_receipts AS (
 cleared_wakeups AS (
  DELETE FROM issue_wakeup WHERE issue_id IN (SELECT target.id FROM target)
 ),
+cleared_child_events AS (
+ DELETE FROM issue_child_event WHERE parent_id IN (SELECT target.id FROM target) OR child_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplements AS (
+ DELETE FROM task_supplement WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_task_supplement_capabilities AS (
+ DELETE FROM task_supplement_capability WHERE issue_id IN (SELECT target.id FROM target)
+),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_pr_automation AS (
+    DELETE FROM issue_pr_automation WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_pr_exclusions AS (
+    DELETE FROM issue_pull_request_exclusion WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_unread AS (
+    DELETE FROM issue_unread WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_environments AS (
+    DELETE FROM issue_environment WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_environment_commands AS (
+    DELETE FROM issue_environment_command WHERE issue_id IN (SELECT target.id FROM target)
+),
+cleared_environment_configs AS (
+    DELETE FROM issue_environment_config WHERE issue_id IN (SELECT target.id FROM target)
+),
+-- task_context_receipt has no FK; the issue's tasks go by the legacy cascade,
+-- so their receipts are swept here by the issue_id copied onto each row.
+cleared_task_context_receipts AS (
+    DELETE FROM task_context_receipt WHERE issue_id IN (SELECT target.id FROM target)
 )
 DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 
@@ -400,9 +528,9 @@ DELETE FROM issue WHERE issue.id IN (SELECT target.id FROM target);
 -- See ListIssues for the semantics of involves_user_id (mirrors the 4-branch
 -- filter; member-direct assignment is intentionally excluded).
 SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.requester_user_id,
        i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.last_activity_at, i.number, i.project_id, i.metadata, i.stage, i.properties,
-       i.revision
+       i.revision, i.duplicate_of_issue_id
 FROM issue i
 WHERE i.workspace_id = $1
   -- Negate only known terminal keys so an unknown legacy key remains visible.
@@ -411,7 +539,10 @@ WHERE i.workspace_id = $1
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
   AND (sqlc.narg('assignee_ids')::uuid[] IS NULL OR i.assignee_id = ANY(sqlc.narg('assignee_ids')::uuid[]))
   AND (sqlc.narg('creator_id')::uuid IS NULL OR i.creator_id = sqlc.narg('creator_id'))
+  AND (sqlc.narg('created_by_user_id')::uuid IS NULL OR (i.creator_type = 'member' AND i.creator_id = sqlc.narg('created_by_user_id')) OR i.requester_user_id = sqlc.narg('created_by_user_id'))
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+  -- MUL-8472: private projects the caller cannot see.
+  AND (sqlc.narg('hidden_project_ids')::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY(sqlc.narg('hidden_project_ids')::uuid[])))
   AND (sqlc.narg('metadata_filter')::jsonb IS NULL OR i.metadata @> sqlc.narg('metadata_filter')::jsonb)
   -- properties_filter is a jsonb array of groups, each group an array of
   -- patterns (built by parsePropertiesFilterParam): the issue must match at
@@ -513,7 +644,10 @@ WHERE i.workspace_id = $1
   AND (sqlc.narg('assignee_id')::uuid IS NULL OR i.assignee_id = sqlc.narg('assignee_id'))
   AND (sqlc.narg('assignee_ids')::uuid[] IS NULL OR i.assignee_id = ANY(sqlc.narg('assignee_ids')::uuid[]))
   AND (sqlc.narg('creator_id')::uuid IS NULL OR i.creator_id = sqlc.narg('creator_id'))
+  AND (sqlc.narg('created_by_user_id')::uuid IS NULL OR (i.creator_type = 'member' AND i.creator_id = sqlc.narg('created_by_user_id')) OR i.requester_user_id = sqlc.narg('created_by_user_id'))
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+  -- MUL-8472: private projects the caller cannot see.
+  AND (sqlc.narg('hidden_project_ids')::uuid[] IS NULL OR i.project_id IS NULL OR NOT (i.project_id = ANY(sqlc.narg('hidden_project_ids')::uuid[])))
   AND (sqlc.narg('scheduled')::bool IS NULL OR (i.start_date IS NOT NULL OR i.due_date IS NOT NULL))
   AND (sqlc.narg('metadata_filter')::jsonb IS NULL OR i.metadata @> sqlc.narg('metadata_filter')::jsonb)
   AND (
@@ -606,6 +740,8 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  -- MUL-8472: private projects the caller cannot see.
+  AND (sqlc.narg('hidden_project_ids')::uuid[] IS NULL OR project_id IS NULL OR NOT (project_id = ANY(sqlc.narg('hidden_project_ids')::uuid[])))
 GROUP BY parent_issue_id;
 
 -- SearchIssues: moved to handler (dynamic SQL for multi-word search support).
@@ -647,14 +783,13 @@ SET first_executed_at = now()
 WHERE id = $1 AND first_executed_at IS NULL
 RETURNING id, workspace_id, creator_type, creator_id, first_executed_at;
 
--- name: CountIssuesUpTo :one
--- Bounded count for issue-limit admission and display. Callers pass only the
--- threshold needed for their decision, avoiding a full scan in an oversized
--- workspace.
-SELECT COUNT(*)::bigint
-FROM (
-    SELECT 1
-    FROM issue
-    WHERE workspace_id = $1
-    LIMIT sqlc.arg('limit')::bigint
-) bounded_issues;
+-- name: ResolveIssueRequester :one
+SELECT t.originator_user_id FROM agent_task_queue t
+JOIN agent a ON a.id = t.agent_id
+WHERE t.id = sqlc.arg(origin_id)::uuid
+  AND a.id = sqlc.arg(creator_id)::uuid
+  AND a.workspace_id = sqlc.arg(workspace_id)::uuid
+  AND t.originator_user_id IS NOT NULL
+  AND t.originator_source = 'direct_human'
+  AND (sqlc.arg(origin_type)::text = 'quick_create'
+       OR (sqlc.arg(origin_type)::text = 'agent_create' AND t.trigger_evidence_kind = 'chat'));
